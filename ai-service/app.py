@@ -3,15 +3,18 @@ import requests
 import sqlite3
 import os
 from dotenv import load_dotenv
-from openai import OpenAI
 
+# ================= ENV =================
 load_dotenv()
 
 app = Flask(__name__)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import os
 
-NODE_API = "http://localhost:3000/api/retail-news-page?page=1"
+NODE_API = os.getenv(
+    "NODE_API",
+    "https://YOUR-NODE-SERVICE.onrender.com/api/retail-news-page?page=1"
+)
 
 # ================= DB =================
 
@@ -24,7 +27,7 @@ def init():
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS news (
-        id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT UNIQUE,
         link TEXT,
         ai TEXT
@@ -33,6 +36,9 @@ def init():
 
     conn.commit()
     conn.close()
+
+with app.app_context():
+    init()
 
 def get(title):
     conn = db()
@@ -45,29 +51,44 @@ def get(title):
 def save(title, link, ai):
     conn = db()
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO news VALUES (NULL,?,?,?)", (title, link, ai))
+    c.execute(
+        "INSERT OR IGNORE INTO news (title, link, ai) VALUES (?,?,?)",
+        (title, link, ai)
+    )
     conn.commit()
     conn.close()
 
-# ================= AI =================
+# ================= SAFE AI (NO CRASH MODE) =================
 
 def classify(text):
     try:
+        # SAFE fallback if no API key
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            return "Category: Neutral | Severity: LOW"
+
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+
         r = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role":"system","content":"Return Category and Severity (LOW/MEDIUM/HIGH)."},
-                {"role":"user","content":text}
+                {"role": "system", "content": "Return Category and Severity (LOW/MEDIUM/HIGH)."},
+                {"role": "user", "content": text}
             ]
         )
         return r.choices[0].message.content.strip()
+
     except Exception as e:
         print("AI error:", e)
         return "Category: Neutral | Severity: LOW"
 
 def score(ai):
-    if "HIGH" in ai: return 3
-    if "MEDIUM" in ai: return 2
+    ai = ai.upper()
+    if "HIGH" in ai:
+        return 3
+    if "MEDIUM" in ai:
+        return 2
     return 1
 
 # ================= DATA =================
@@ -75,8 +96,7 @@ def score(ai):
 def load():
     try:
         r = requests.get(NODE_API, timeout=10)
-        data = r.json()
-        return data.get("articles", [])
+        return r.json().get("articles", [])
     except Exception as e:
         print("Node API error:", e)
         return []
@@ -85,11 +105,9 @@ def load():
 
 @app.route("/")
 def home():
-
     items = []
 
     for a in load():
-
         title = a.get("title", "")
         link = a.get("link", "")
 
@@ -111,6 +129,9 @@ def home():
 
     return render_template("dashboard.html", items=items)
 
+
+# ================= RENDER ENTRY =================
+
 if __name__ == "__main__":
-    init()
-    app.run(port=5050, debug=True)
+    port = int(os.environ.get("PORT", 5050))
+    app.run(host="0.0.0.0", port=port)
