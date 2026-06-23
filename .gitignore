@@ -1,0 +1,17 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Node modules (optional if you deploy Node separately)
+node_modules/
+
+# SQLite database (important for safety)
+news.db
+.env
+news.db
+node-service/node_modules/
+.env
+news.db
