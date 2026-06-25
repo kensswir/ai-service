@@ -1,4 +1,5 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify
+import feedparser
 
 app = Flask(__name__)
 
@@ -12,55 +13,83 @@ def home():
 
 
 # ----------------------------
-# RISK SCORING FUNCTION
+# RISK ENGINE
 # ----------------------------
 def calculate_risk(title: str):
-    title = title.lower()
+    t = title.lower()
 
-    high_risk_keywords = [
-        "war", "crisis", "earthquake", "attack", "inflation",
-        "bankrupt", "collapse", "conflict", "kill", "death",
-        "terror", "sanction", "recession"
+    high = [
+        "war", "crisis", "earthquake", "inflation", "attack",
+        "death", "collapse", "recession", "bankrupt", "conflict"
     ]
 
-    medium_risk_keywords = [
+    medium = [
         "policy", "government", "economy", "market",
-        "trade", "finance", "investing", "business"
+        "trade", "business", "finance", "investing"
     ]
 
-    if any(word in title for word in high_risk_keywords):
+    if any(x in t for x in high):
         return "HIGH"
-    elif any(word in title for word in medium_risk_keywords):
+    if any(x in t for x in medium):
         return "MEDIUM"
-    else:
-        return "LOW"
+    return "LOW"
 
 
 # ----------------------------
-# API: RETAIL NEWS + RISK
+# RSS SOURCES
 # ----------------------------
-@app.route("/api/retail-news-page", methods=["GET"])
+RSS_FEEDS = [
+    "https://www.tagesschau.de/xml/rss2/",
+    "https://www.handelsblatt.com/contentexport/feed/schlagzeilen",
+    "https://www.deutschlandfunk.de/rss"
+]
+
+
+# ----------------------------
+# FETCH RSS ARTICLES
+# ----------------------------
+def fetch_articles(limit=10):
+    articles = []
+
+    for url in RSS_FEEDS:
+        feed = feedparser.parse(url)
+
+        for entry in feed.entries[:limit]:
+            title = entry.get("title", "No title")
+            link = entry.get("link", "#")
+            pubDate = entry.get("published", "")
+
+            articles.append({
+                "title": title,
+                "link": link,
+                "pubDate": pubDate,
+                "source": url,
+                "risk": calculate_risk(title)
+            })
+
+    return articles
+
+
+# ----------------------------
+# API ENDPOINT
+# ----------------------------
+@app.route("/api/retail-news-page")
 def retail_news_page():
+    try:
+        articles = fetch_articles()
 
-    # demo data (we will replace with RSS later)
-    articles = [
-        {"title": "Global market falls due to inflation fears", "link": "#", "pubDate": "2026-01-01", "source": "demo"},
-        {"title": "New government policy announced", "link": "#", "pubDate": "2026-01-01", "source": "demo"},
-        {"title": "Local sports event draws attention", "link": "#", "pubDate": "2026-01-01", "source": "demo"},
-        {"title": "Earthquake causes major damage in region", "link": "#", "pubDate": "2026-01-01", "source": "demo"}
-    ]
+        return jsonify({
+            "page": 1,
+            "total": len(articles),
+            "articles": articles
+        })
 
-    enriched = []
-    for a in articles:
-        risk = calculate_risk(a["title"])
-        a["risk"] = risk
-        enriched.append(a)
-
-    return jsonify({
-        "page": 1,
-        "total": len(enriched),
-        "articles": enriched
-    })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "articles": [],
+            "total": 0
+        })
 
 
 # ----------------------------
