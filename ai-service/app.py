@@ -1,11 +1,40 @@
 from flask import Flask, render_template, jsonify
 import feedparser
+import hashlib
+import sqlite3
+from datetime import datetime
 
 app = Flask(__name__)
 
+DB = "news.db"
+
 
 # ----------------------------
-# HOME PAGE
+# INIT DB (CACHE LAYER)
+# ----------------------------
+def init_db():
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS articles (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            link TEXT,
+            pubDate TEXT,
+            source TEXT,
+            risk TEXT,
+            created_at TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+init_db()
+
+
+# ----------------------------
+# HOME
 # ----------------------------
 @app.route("/")
 def home():
@@ -13,37 +42,24 @@ def home():
 
 
 # ----------------------------
-# RETAIL RISK SCORING ENGINE
+# RISK ENGINE (RETAIL FOCUS)
 # ----------------------------
 def calculate_risk(title: str):
     t = title.lower()
 
     high_keywords = [
-        # crisis / emergency
-        "war", "attack", "death", "killed", "earthquake", "crisis",
-        "collapse", "recession", "bankrupt", "explosion", "fire",
-        "accident", "warning", "terror", "conflict", "strike",
-
-        # inflation / economy shock
-        "inflation", "price surge", "cost increase", "energy crisis",
-        "supply shortage", "shortage", "commodity shock",
-
-        # retail / supermarkets (YOUR FOCUS)
+        "war", "attack", "death", "earthquake", "crisis",
+        "collapse", "recession", "bankrupt", "fire", "explosion",
+        "inflation", "price surge", "energy crisis", "shortage",
         "aldi", "lidl", "rewe", "edeka", "kaufland",
-        "supermarket", "retail", "grocery", "food prices",
-        "food inflation", "price war", "discount war",
-        "store closure", "product shortage",
-
-        # food essentials
-        "milk", "bread", "meat", "coffee", "butter",
-        "food crisis", "food shortage", "agriculture crisis"
+        "food prices", "food inflation", "price war",
+        "store closure", "supply shortage", "coffee", "milk", "bread"
     ]
 
     medium_keywords = [
         "policy", "government", "economy", "market",
         "finance", "business", "trade", "tax",
-        "company", "merger", "investment", "bank",
-        "tesla", "vw", "bayer"
+        "company", "merger", "investment"
     ]
 
     score = 0
@@ -65,46 +81,103 @@ def calculate_risk(title: str):
 
 
 # ----------------------------
-# RSS SOURCES
+# RSS SOURCES (SCALED)
 # ----------------------------
 RSS_FEEDS = [
     "https://www.tagesschau.de/xml/rss2/",
     "https://www.handelsblatt.com/contentexport/feed/schlagzeilen",
-    "https://www.deutschlandfunk.de/rss"
+    "https://www.deutschlandfunk.de/rss",
+    "https://www.n-tv.de/rss",
+    "https://www.spiegel.de/schlagzeilen/index.rss",
 ]
 
 
 # ----------------------------
-# FETCH RSS ARTICLES SAFELY
+# HASH FOR DEDUP
 # ----------------------------
-def fetch_articles(limit=10):
-    articles = []
+def make_id(title, link):
+    raw = title + link
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+# ----------------------------
+# FETCH + SCALE + DEDUP + CACHE
+# ----------------------------
+def fetch_articles(limit_per_feed=30):
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+
+    new_articles = []
 
     for url in RSS_FEEDS:
         try:
             feed = feedparser.parse(url)
 
-            for entry in feed.entries[:limit]:
+            for entry in feed.entries[:limit_per_feed]:
                 title = entry.get("title", "No title")
                 link = entry.get("link", "#")
                 pubDate = entry.get("published", "")
 
-                articles.append({
+                uid = make_id(title, link)
+                risk = calculate_risk(title)
+
+                # check duplicate
+                c.execute("SELECT id FROM articles WHERE id=?", (uid,))
+                if c.fetchone():
+                    continue
+
+                article = (
+                    uid,
+                    title,
+                    link,
+                    pubDate,
+                    url,
+                    risk,
+                    datetime.utcnow().isoformat()
+                )
+
+                c.execute("""
+                    INSERT INTO articles VALUES (?,?,?,?,?,?,?)
+                """, article)
+
+                new_articles.append({
                     "title": title,
                     "link": link,
                     "pubDate": pubDate,
                     "source": url,
-                    "risk": calculate_risk(title)
+                    "risk": risk
                 })
 
         except Exception as e:
-            print(f"RSS error for {url}: {e}")
+            print(f"RSS error: {url} -> {e}")
 
-    return articles
+    conn.commit()
+
+    # return latest 200 cached articles
+    c.execute("""
+        SELECT title, link, pubDate, source, risk
+        FROM articles
+        ORDER BY created_at DESC
+        LIMIT 200
+    """)
+
+    rows = c.fetchall()
+    conn.close()
+
+    return [
+        {
+            "title": r[0],
+            "link": r[1],
+            "pubDate": r[2],
+            "source": r[3],
+            "risk": r[4]
+        }
+        for r in rows
+    ]
 
 
 # ----------------------------
-# API ENDPOINT
+# API
 # ----------------------------
 @app.route("/api/retail-news-page")
 def retail_news_page():
@@ -118,7 +191,7 @@ def retail_news_page():
 
 
 # ----------------------------
-# RUN LOCALLY
+# RUN
 # ----------------------------
 if __name__ == "__main__":
     app.run(debug=True)
