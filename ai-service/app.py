@@ -1,46 +1,30 @@
-from flask import Flask, jsonify
-import requests
+from flask import Flask, render_template, jsonify, request
+import json
+import os
 
 app = Flask(__name__)
 
-NODE_URL = "https://retail-ai-backend-1.onrender.com/api/retail-news-page?page=1"
-
+# -----------------------------
+# HOME DASHBOARD
+# -----------------------------
 @app.route("/")
 def home():
-    return "Flask OK"
+    return render_template("index.html")
 
-@app.route("/news")
-def news():
 
+# -----------------------------
+# API: RETAIL NEWS ENDPOINT
+# -----------------------------
+@app.route("/api/retail-news-page", methods=["GET"])
+def retail_news_page():
     try:
-        r = requests.get(NODE_URL, timeout=25)
+        page = request.args.get("page", 1)
 
-        # 🔥 DEBUG OUTPUT (IMPORTANT)
-        print("STATUS:", r.status_code)
-        print("BODY SAMPLE:", r.text[:200])
+        # If you have a Node API upstream, read it safely
+        # IMPORTANT: replace this URL if needed
+        NODE_API_URL = "http://localhost:3000/api/news"
 
-        # ❌ HARD CHECK 1
-        if r.status_code != 200:
-            return jsonify({"error": "bad status", "code": r.status_code})
+        import requests
+        r = requests.get(NODE_API_URL, timeout=10)
 
-        # ❌ HARD CHECK 2
-        if not r.text or len(r.text.strip()) < 10:
-            return jsonify({"error": "empty or invalid response"})
-
-        # ❌ SAFE JSON PARSE
-        try:
-            data = r.json()
-        except Exception as e:
-            return jsonify({
-                "error": "json parse failed",
-                "details": str(e),
-                "raw": r.text[:200]
-            })
-
-        return jsonify(data)
-
-    except requests.exceptions.Timeout:
-        return jsonify({"error": "timeout from node"})
-
-    except Exception as e:
-        return jsonify({"error": str(e)})
+        # 🔥 FIX:
