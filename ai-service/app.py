@@ -1,137 +1,46 @@
-from flask import Flask, render_template
+from flask import Flask, jsonify
 import requests
-import sqlite3
-import os
-from dotenv import load_dotenv
-
-# ================= ENV =================
-load_dotenv()
 
 app = Flask(__name__)
 
-import os
-
-NODE_API = os.getenv(
-    "NODE_API",
-    "https://YOUR-NODE-SERVICE.onrender.com/api/retail-news-page?page=1"
-)
-
-# ================= DB =================
-
-def db():
-    return sqlite3.connect("news.db")
-
-def init():
-    conn = db()
-    c = conn.cursor()
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS news (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT UNIQUE,
-        link TEXT,
-        ai TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-with app.app_context():
-    init()
-
-def get(title):
-    conn = db()
-    c = conn.cursor()
-    c.execute("SELECT ai FROM news WHERE title=?", (title,))
-    r = c.fetchone()
-    conn.close()
-    return r
-
-def save(title, link, ai):
-    conn = db()
-    c = conn.cursor()
-    c.execute(
-        "INSERT OR IGNORE INTO news (title, link, ai) VALUES (?,?,?)",
-        (title, link, ai)
-    )
-    conn.commit()
-    conn.close()
-
-# ================= SAFE AI (NO CRASH MODE) =================
-
-def classify(text):
-    try:
-        # SAFE fallback if no API key
-        key = os.getenv("OPENAI_API_KEY")
-        if not key:
-            return "Category: Neutral | Severity: LOW"
-
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
-
-        r = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Return Category and Severity (LOW/MEDIUM/HIGH)."},
-                {"role": "user", "content": text}
-            ]
-        )
-        return r.choices[0].message.content.strip()
-
-    except Exception as e:
-        print("AI error:", e)
-        return "Category: Neutral | Severity: LOW"
-
-def score(ai):
-    ai = ai.upper()
-    if "HIGH" in ai:
-        return 3
-    if "MEDIUM" in ai:
-        return 2
-    return 1
-
-# ================= DATA =================
-
-def load():
-    try:
-        r = requests.get(NODE_API, timeout=10)
-        return r.json().get("articles", [])
-    except Exception as e:
-        print("Node API error:", e)
-        return []
-
-# ================= ROUTE =================
+NODE_URL = "https://retail-ai-backend-1.onrender.com/api/retail-news-page?page=1"
 
 @app.route("/")
 def home():
-    items = []
+    return "Flask OK"
 
-    for a in load():
-        title = a.get("title", "")
-        link = a.get("link", "")
+@app.route("/news")
+def news():
 
-        cached = get(title)
+    try:
+        r = requests.get(NODE_URL, timeout=25)
 
-        if cached:
-            ai = cached[0]
-        else:
-            ai = classify(title)
-            save(title, link, ai)
+        # 🔥 DEBUG OUTPUT (IMPORTANT)
+        print("STATUS:", r.status_code)
+        print("BODY SAMPLE:", r.text[:200])
 
-        items.append({
-            "title": title,
-            "link": link,
-            "ai": ai
-        })
+        # ❌ HARD CHECK 1
+        if r.status_code != 200:
+            return jsonify({"error": "bad status", "code": r.status_code})
 
-    items.sort(key=lambda x: score(x["ai"]), reverse=True)
+        # ❌ HARD CHECK 2
+        if not r.text or len(r.text.strip()) < 10:
+            return jsonify({"error": "empty or invalid response"})
 
-    return render_template("dashboard.html", items=items)
+        # ❌ SAFE JSON PARSE
+        try:
+            data = r.json()
+        except Exception as e:
+            return jsonify({
+                "error": "json parse failed",
+                "details": str(e),
+                "raw": r.text[:200]
+            })
 
+        return jsonify(data)
 
-# ================= RENDER ENTRY =================
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "timeout from node"})
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5050))
-    app.run(host="0.0.0.0", port=port)
+    except Exception as e:
+        return jsonify({"error": str(e)})
