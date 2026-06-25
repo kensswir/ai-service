@@ -13,26 +13,55 @@ def home():
 
 
 # ----------------------------
-# RISK ENGINE
+# RETAIL RISK SCORING ENGINE
 # ----------------------------
 def calculate_risk(title: str):
     t = title.lower()
 
-    high = [
-        "war", "crisis", "earthquake", "inflation", "attack",
-        "death", "collapse", "recession", "bankrupt", "conflict"
+    high_keywords = [
+        # crisis / emergency
+        "war", "attack", "death", "killed", "earthquake", "crisis",
+        "collapse", "recession", "bankrupt", "explosion", "fire",
+        "accident", "warning", "terror", "conflict", "strike",
+
+        # inflation / economy shock
+        "inflation", "price surge", "cost increase", "energy crisis",
+        "supply shortage", "shortage", "commodity shock",
+
+        # retail / supermarkets (YOUR FOCUS)
+        "aldi", "lidl", "rewe", "edeka", "kaufland",
+        "supermarket", "retail", "grocery", "food prices",
+        "food inflation", "price war", "discount war",
+        "store closure", "product shortage",
+
+        # food essentials
+        "milk", "bread", "meat", "coffee", "butter",
+        "food crisis", "food shortage", "agriculture crisis"
     ]
 
-    medium = [
+    medium_keywords = [
         "policy", "government", "economy", "market",
-        "trade", "business", "finance", "investing"
+        "finance", "business", "trade", "tax",
+        "company", "merger", "investment", "bank",
+        "tesla", "vw", "bayer"
     ]
 
-    if any(x in t for x in high):
+    score = 0
+
+    for w in high_keywords:
+        if w in t:
+            score += 3
+
+    for w in medium_keywords:
+        if w in t:
+            score += 1
+
+    if score >= 3:
         return "HIGH"
-    if any(x in t for x in medium):
+    elif score >= 1:
         return "MEDIUM"
-    return "LOW"
+    else:
+        return "LOW"
 
 
 # ----------------------------
@@ -46,26 +75,30 @@ RSS_FEEDS = [
 
 
 # ----------------------------
-# FETCH RSS ARTICLES
+# FETCH RSS ARTICLES SAFELY
 # ----------------------------
 def fetch_articles(limit=10):
     articles = []
 
     for url in RSS_FEEDS:
-        feed = feedparser.parse(url)
+        try:
+            feed = feedparser.parse(url)
 
-        for entry in feed.entries[:limit]:
-            title = entry.get("title", "No title")
-            link = entry.get("link", "#")
-            pubDate = entry.get("published", "")
+            for entry in feed.entries[:limit]:
+                title = entry.get("title", "No title")
+                link = entry.get("link", "#")
+                pubDate = entry.get("published", "")
 
-            articles.append({
-                "title": title,
-                "link": link,
-                "pubDate": pubDate,
-                "source": url,
-                "risk": calculate_risk(title)
-            })
+                articles.append({
+                    "title": title,
+                    "link": link,
+                    "pubDate": pubDate,
+                    "source": url,
+                    "risk": calculate_risk(title)
+                })
+
+        except Exception as e:
+            print(f"RSS error for {url}: {e}")
 
     return articles
 
@@ -75,21 +108,13 @@ def fetch_articles(limit=10):
 # ----------------------------
 @app.route("/api/retail-news-page")
 def retail_news_page():
-    try:
-        articles = fetch_articles()
+    articles = fetch_articles()
 
-        return jsonify({
-            "page": 1,
-            "total": len(articles),
-            "articles": articles
-        })
-
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "articles": [],
-            "total": 0
-        })
+    return jsonify({
+        "page": 1,
+        "total": len(articles),
+        "articles": articles
+    })
 
 
 # ----------------------------
