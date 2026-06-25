@@ -6,36 +6,42 @@
 
 <body>
     <h1>🧠 Retail Risk Dashboard</h1>
-    <h3 id="status">Loading data...</h3>
+    <h3 id="status">Loading...</h3>
 
     <ul id="news"></ul>
 
     <script>
-        async function loadData() {
-            try {
-                const res = await fetch("/api/retail-news-page?page=1");
-                const data = await res.json();
+        async function load() {
+            const res = await fetch("/api/retail-news-page?page=1");
+            const data = await res.json();
 
-                document.getElementById("status").innerText =
-                    "Total articles: " + data.total;
+            document.getElementById("status").innerText =
+                "Total: " + data.total;
 
-                const list = document.getElementById("news");
-                list.innerHTML = "";
+            const list = document.getElementById("news");
+            list.innerHTML = "";
 
-                data.articles.forEach(item => {
-                    const li = document.createElement("li");
-                    li.innerHTML = `<a href="${item.link}" target="_blank">${item.title}</a>`;
-                    list.appendChild(li);
-                });
+            data.articles.forEach(a => {
+                const color =
+                    a.risk === "HIGH" ? "red" :
+                    a.risk === "MEDIUM" ? "orange" : "green";
 
-            } catch (err) {
-                console.error(err);
-                document.getElementById("status").innerText =
-                    "Error loading data (check API)";
-            }
+                const li = document.createElement("li");
+
+                li.innerHTML = `
+                    <b style="color:${color}">
+                        [${a.risk}]
+                    </b>
+                    <a href="${a.link}" target="_blank">
+                        ${a.title}
+                    </a>
+                `;
+
+                list.appendChild(li);
+            });
         }
 
-        loadData();
+        load();
     </script>
 </body>
 </html>
