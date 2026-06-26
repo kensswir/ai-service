@@ -1,7 +1,7 @@
 from flask import Flask, render_template, jsonify
 import feedparser
-import hashlib
 import sqlite3
+import hashlib
 from datetime import datetime
 
 app = Flask(__name__)
@@ -10,7 +10,7 @@ DB = "news.db"
 
 
 # ----------------------------
-# INIT DB (CACHE LAYER)
+# INIT DB
 # ----------------------------
 def init_db():
     conn = sqlite3.connect(DB)
@@ -23,139 +23,143 @@ def init_db():
             pubDate TEXT,
             source TEXT,
             risk TEXT,
+            type TEXT,
             created_at TEXT
         )
     """)
     conn.commit()
     conn.close()
 
-
 init_db()
 
 
 # ----------------------------
-# HOME
+# RSS FEEDS (FOOD SAFETY + RETAIL GERMANY)
 # ----------------------------
-@app.route("/")
-def home():
-    return render_template("index.html")
+RSS_FEEDS = [
+    "https://www.lebensmittelwarnung.de/bvl-lmw-de/opensaga/feed.xml",
+    "https://www.foodwatch.org/de/rss.xml",
+    "https://www.tagesschau.de/xml/rss2/",
+    "https://www.spiegel.de/schlagzeilen/index.rss",
+    "https://www.n-tv.de/rss"
+]
 
 
 # ----------------------------
-# RISK ENGINE (RETAIL FOCUS)
+# ID
+# ----------------------------
+def make_id(title, link):
+    return hashlib.md5((title + link).encode()).hexdigest()
+
+
+# ----------------------------
+# RISK ENGINE (FOOD SAFETY FOCUS)
 # ----------------------------
 def calculate_risk(title: str):
     t = title.lower()
 
-    high_keywords = [
-        "war", "attack", "death", "earthquake", "crisis",
-        "collapse", "recession", "bankrupt", "fire", "explosion",
-        "inflation", "price surge", "energy crisis", "shortage",
-        "aldi", "lidl", "rewe", "edeka", "kaufland",
-        "food prices", "food inflation", "price war",
-        "store closure", "supply shortage", "coffee", "milk", "bread"
+    high = [
+        "recall", "warning", "withdrawal", "contamination",
+        "listeria", "salmonella", "food poisoning",
+        "risk", "danger", "outbreak"
     ]
 
-    medium_keywords = [
-        "policy", "government", "economy", "market",
-        "finance", "business", "trade", "tax",
-        "company", "merger", "investment"
-    ]
+    retail = ["aldi", "lidl", "rewe", "edeka", "promotion", "offer"]
+
+    complaint = ["complaint", "lawsuit", "investigation", "customer"]
 
     score = 0
 
-    for w in high_keywords:
+    for w in high:
         if w in t:
-            score += 3
+            score += 4
 
-    for w in medium_keywords:
+    for w in retail:
+        if w in t:
+            score += 2
+
+    for w in complaint:
         if w in t:
             score += 1
 
-    if score >= 3:
+    if score >= 6:
         return "HIGH"
-    elif score >= 1:
+    elif score >= 3:
         return "MEDIUM"
     else:
         return "LOW"
 
 
-# ----------------------------
-# RSS SOURCES (SCALED)
-# ----------------------------
-RSS_FEEDS = [
-    "https://www.tagesschau.de/xml/rss2/",
-    "https://www.handelsblatt.com/contentexport/feed/schlagzeilen",
-    "https://www.deutschlandfunk.de/rss",
-    "https://www.n-tv.de/rss",
-    "https://www.spiegel.de/schlagzeilen/index.rss",
-]
+def classify_type(title):
+    t = title.lower()
+
+    if any(x in t for x in ["recall", "withdrawal", "warning", "contamination"]):
+        return "RECALL"
+
+    if any(x in t for x in ["aldi", "lidl", "rewe", "edeka", "promotion", "offer"]):
+        return "RETAIL"
+
+    if any(x in t for x in ["complaint", "lawsuit", "investigation"]):
+        return "COMPLAINT"
+
+    return "NEWS"
 
 
 # ----------------------------
-# HASH FOR DEDUP
+# FETCH NEWS
 # ----------------------------
-def make_id(title, link):
-    raw = title + link
-    return hashlib.md5(raw.encode()).hexdigest()
-
-
-# ----------------------------
-# FETCH + SCALE + DEDUP + CACHE
-# ----------------------------
-def fetch_articles(limit_per_feed=30):
+def fetch_articles(limit=30):
     conn = sqlite3.connect(DB)
     c = conn.cursor()
 
-    new_articles = []
+    articles = []
 
     for url in RSS_FEEDS:
         try:
             feed = feedparser.parse(url)
 
-            for entry in feed.entries[:limit_per_feed]:
-                title = entry.get("title", "No title")
-                link = entry.get("link", "#")
+            for entry in feed.entries[:limit]:
+                title = entry.get("title", "")
+                link = entry.get("link", "")
                 pubDate = entry.get("published", "")
 
                 uid = make_id(title, link)
                 risk = calculate_risk(title)
+                type_ = classify_type(title)
 
-                # check duplicate
                 c.execute("SELECT id FROM articles WHERE id=?", (uid,))
                 if c.fetchone():
                     continue
 
-                article = (
+                c.execute("""
+                    INSERT INTO articles VALUES (?,?,?,?,?,?,?,?)
+                """, (
                     uid,
                     title,
                     link,
                     pubDate,
                     url,
                     risk,
+                    type_,
                     datetime.utcnow().isoformat()
-                )
+                ))
 
-                c.execute("""
-                    INSERT INTO articles VALUES (?,?,?,?,?,?,?)
-                """, article)
-
-                new_articles.append({
+                articles.append({
                     "title": title,
                     "link": link,
                     "pubDate": pubDate,
                     "source": url,
-                    "risk": risk
+                    "risk": risk,
+                    "type": type_
                 })
 
         except Exception as e:
-            print(f"RSS error: {url} -> {e}")
+            print("RSS error:", url, e)
 
     conn.commit()
 
-    # return latest 200 cached articles
     c.execute("""
-        SELECT title, link, pubDate, source, risk
+        SELECT title, link, pubDate, source, risk, type
         FROM articles
         ORDER BY created_at DESC
         LIMIT 200
@@ -170,7 +174,8 @@ def fetch_articles(limit_per_feed=30):
             "link": r[1],
             "pubDate": r[2],
             "source": r[3],
-            "risk": r[4]
+            "risk": r[4],
+            "type": r[5]
         }
         for r in rows
     ]
@@ -179,15 +184,25 @@ def fetch_articles(limit_per_feed=30):
 # ----------------------------
 # API
 # ----------------------------
-@app.route("/api/retail-news-page")
-def retail_news_page():
+@app.route("/api/news")
+def api_news():
     articles = fetch_articles()
 
     return jsonify({
-        "page": 1,
         "total": len(articles),
-        "articles": articles
+        "food_recall": [a for a in articles if a["type"] == "RECALL"],
+        "retail": [a for a in articles if a["type"] == "RETAIL"],
+        "complaints": [a for a in articles if a["type"] == "COMPLAINT"],
+        "all": articles
     })
+
+
+# ----------------------------
+# UI
+# ----------------------------
+@app.route("/")
+def home():
+    return render_template("index.html")
 
 
 # ----------------------------

@@ -1,47 +1,53 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Retail Risk Dashboard</title>
+    <title>Food Safety Retail Dashboard</title>
+    <style>
+        body { font-family: Arial; background:#111; color:#fff; }
+        .box { margin:20px; padding:15px; border-radius:10px; background:#222; }
+        .high { color:red; }
+        .med { color:orange; }
+        .low { color:lightgreen; }
+    </style>
 </head>
 
 <body>
-    <h1>🧠 Retail Risk Dashboard</h1>
-    <h3 id="status">Loading...</h3>
 
-    <ul id="news"></ul>
+<h1>🇩🇪 Retail Food Safety Dashboard</h1>
 
-    <script>
-        async function load() {
-            const res = await fetch("/api/retail-news-page?page=1");
-            const data = await res.json();
+<div class="box">
+    <h2>🚨 Food Recalls</h2>
+    <div id="recalls"></div>
+</div>
 
-            document.getElementById("status").innerText =
-                "Total: " + data.total;
+<div class="box">
+    <h2>🛒 Retail News (ALDI / LIDL / REWE / EDEKA)</h2>
+    <div id="retail"></div>
+</div>
 
-            const list = document.getElementById("news");
-            list.innerHTML = "";
+<div class="box">
+    <h2>💬 Complaints / Investigations</h2>
+    <div id="complaints"></div>
+</div>
 
-            data.articles.forEach(a => {
-                const color =
-                    a.risk === "HIGH" ? "red" :
-                    a.risk === "MEDIUM" ? "orange" : "green";
+<script>
+async function loadData(){
+    const res = await fetch("/api/news");
+    const data = await res.json();
 
-                const li = document.createElement("li");
+    document.getElementById("recalls").innerHTML =
+        data.food_recall.map(a => `<p class="high">[RECALL] ${a.title}</p>`).join("");
 
-                li.innerHTML = `
-                    <b style="color:${color}">
-                        [${a.risk}]
-                    </b>
-                    <a href="${a.link}" target="_blank">
-                        ${a.title}
-                    </a>
-                `;
+    document.getElementById("retail").innerHTML =
+        data.retail.map(a => `<p class="med">[RETAIL] ${a.title}</p>`).join("");
 
-                list.appendChild(li);
-            });
-        }
+    document.getElementById("complaints").innerHTML =
+        data.complaints.map(a => `<p class="low">[CASE] ${a.title}</p>`).join("");
+}
 
-        load();
-    </script>
+loadData();
+setInterval(loadData, 30000);
+</script>
+
 </body>
 </html>
